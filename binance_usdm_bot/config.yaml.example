@@ -1,0 +1,88 @@
+# =========================
+# Binance USDT-M Futures Bot
+# =========================
+
+exchange:
+  exchange_id: "binanceusdm"
+  testnet: false
+  enable_rate_limit: true
+  timeout_ms: 20000
+  recv_window_ms: 5000
+
+discord:
+  enabled: true
+  webhook_url: ""   # 보안상 .env (DISCORD_WEBHOOK_URL) 사용 권장
+  username: "USDM-Bot"
+  mention: ""       # 예: "<@1234567890>" 또는 "<@&ROLE_ID>"
+
+# 비용 모델 (보수적)
+cost:
+  maker_fee: 0.0002
+  taker_fee: 0.0004
+  slippage: 0.00015
+  funding_rate_per_8h: 0.0001
+  funding_cost_multiplier: 0.5
+
+risk:
+  leverage: 3
+  per_trade_risk: 0.0125      # 1.25% (1~2% 권장 범위)
+  max_positions: 4
+  max_margin_fraction: 0.35
+  max_total_margin_fraction: 0.85
+  daily_loss_limit: 0.04
+  close_on_daily_stop: true
+  kill_switch_max_drawdown: 0.30
+  min_notional_usdt: 10.0
+
+selector:
+  top_n: 10
+  candidates: 40
+  max_abs_funding: 0.002
+  refresh_interval_sec: 21600   # 6h
+  w_volume: 0.6
+  w_volatility: 0.4
+  volatility_lookback_bars: 288
+
+strategy:
+  # Regime
+  adx_len: 14
+  adx_trend_min: 22
+  adx_range_max: 18
+
+  # Trend breakout
+  donchian_window: 20
+  ema_fast: 50
+  ema_slow: 200
+  atr_len: 14
+  stop_atr_mult_trend: 2.8
+  tp_r_trend: 2.2
+  trail_atr_mult_trend: 2.2
+  trail_update_min_gap: 0.001
+
+  # Mean reversion
+  rsi_len: 14
+  rsi_low: 30
+  rsi_high: 70
+  bb_len: 20
+  bb_std: 2.0
+  stop_atr_mult_mr: 2.2
+  tp_r_mr: 1.4
+
+backtest:
+  timeframe: "5m"
+  in_sample_days: 360
+  walk_forward_days: 180
+  wf_train_days: 90
+  wf_test_days: 30
+  ohlcv_limit: 1500
+  cache_dir: "data_cache"
+
+live:
+  poll_interval_sec: 20
+  working_type: "MARK_PRICE"
+  margin_mode: "isolated"
+  cancel_orphan_orders: true
+  heartbeat_sec: 3600
+
+quote_asset: "USDT"
+only_perpetual: true

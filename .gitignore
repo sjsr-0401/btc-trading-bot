@@ -1,0 +1,29 @@
+## .NET
+bin/
+obj/
+publish/
+publish2/
+installer_output/
+*.user
+*.suo
+*.cache
+*.vs/
+
+## Python
+__pycache__/
+*.pyc
+.env
+venv/
+
+## IDE
+.vs/
+.idea/
+*.swp
+
+## Build
+nul
+
+## Sensitive
+*.key
+*.secret
+appsettings.*.json
