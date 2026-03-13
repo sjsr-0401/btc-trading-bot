@@ -61,6 +61,7 @@ public partial class ChartControl : UserControl
             SeparatorsPaint = new SolidColorPaint(new SKColor(51, 51, 51)) { StrokeThickness = 0.5f },
             LabelsPaint = new SolidColorPaint(new SKColor(156, 163, 175)),
             TextSize = 11,
+            Labeler = FormatYLabel,
         };
 
         CandleChart.XAxes = [_candleXAxis];
@@ -93,6 +94,15 @@ public partial class ChartControl : UserControl
         if (DataContext is not ChartViewModel vm) return "";
         int idx = (int)Math.Round(value);
         return vm.FormatTimestamp(idx);
+    }
+
+    private static string FormatYLabel(double value)
+    {
+        if (value >= 10000) return value.ToString("N0");
+        if (value >= 100)   return value.ToString("N2");
+        if (value >= 1)     return value.ToString("N4");
+        if (value >= 0.01)  return value.ToString("N5");
+        return value.ToString("N6");
     }
 
     private void OnChartZoom(object sender, MouseWheelEventArgs e)
@@ -291,8 +301,13 @@ public partial class ChartControl : UserControl
         var (yMin, yMax) = vm.GetYRange(start, end);
         if (yMin >= yMax) return;
 
+        // 포지션 라인 가격도 Y 범위에 포함 → 스크롤해도 항상 보임
+        if (vm.EntryLinePrice > 0) { yMin = Math.Min(yMin, vm.EntryLinePrice); yMax = Math.Max(yMax, vm.EntryLinePrice); }
+        if (vm.SlLinePrice    > 0) { yMin = Math.Min(yMin, vm.SlLinePrice);    yMax = Math.Max(yMax, vm.SlLinePrice); }
+        if (vm.TpLinePrice    > 0) { yMin = Math.Min(yMin, vm.TpLinePrice);    yMax = Math.Max(yMax, vm.TpLinePrice); }
+
         double padding = (yMax - yMin) * 0.05;
-        if (padding < 1) padding = 1;
+        if (padding <= 0) padding = yMin * 0.001;
         _candleYAxis.MinLimit = yMin - padding;
         _candleYAxis.MaxLimit = yMax + padding;
     }

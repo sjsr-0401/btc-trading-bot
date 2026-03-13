@@ -14,6 +14,7 @@ public class CoinScanResult
     public double VolumeRatio { get; init; }
     public double PriceChange24h { get; init; }   // 24시간 변동률 %
     public double Volume24hUsdt { get; init; }   // 24시간 USDT 거래량
+    public bool ShortOnly { get; init; }          // 펌프 잡코인 — 숏만 허용
 
     // === Display helpers ===
 

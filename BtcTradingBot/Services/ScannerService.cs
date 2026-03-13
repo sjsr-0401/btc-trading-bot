@@ -4,6 +4,9 @@ namespace BtcTradingBot.Services;
 
 public class ScannerService
 {
+    private const double PumpThresholdPct = 20.0; // 24h 변동률 이상이면 펌프 잡코인
+    private const int MajorCoinCount = 5;         // 거래량 상위 N개 = 메이저 코인 (롱+숏)
+
     /// <summary>상위 코인들을 스캔하여 진입 준비도 분석</summary>
     public async Task<List<CoinScanResult>> ScanAsync(
         List<SymbolInfo> symbols,
@@ -38,12 +41,38 @@ public class ScannerService
         }
         catch { /* 24h 데이터 없어도 스캔 계속 */ }
 
+        // 거래량 Top N 결정: 스캔 대상 중 상위 MajorCoinCount개 = 메이저
+        // vol24h 데이터 없으면 전체를 메이저로 처리 (폴백)
+        HashSet<string> majorSymbols;
+        if (vol24h.Count > 0)
+        {
+            majorSymbols = symbols
+                .Where(s => vol24h.ContainsKey(s.Symbol))
+                .OrderByDescending(s => vol24h[s.Symbol])
+                .Take(MajorCoinCount)
+                .Select(s => s.Symbol)
+                .ToHashSet();
+        }
+        else
+        {
+            majorSymbols = symbols.Select(s => s.Symbol).ToHashSet();
+        }
+
         int current = 0;
         foreach (var sym in symbols)
         {
             ct.ThrowIfCancellationRequested();
             current++;
             progress?.Invoke(current, symbols.Count);
+
+            // === 코인 분류 ===
+            bool isMajor = majorSymbols.Contains(sym.Symbol);
+            change24h.TryGetValue(sym.Symbol, out double sym24hChange);
+            bool isPump = !isMajor && sym24hChange >= PumpThresholdPct;
+
+            // 일반 잡코인 (메이저도 아니고 펌프도 아님) → 스킵
+            if (!isMajor && !isPump)
+                continue;
 
             try
             {
@@ -61,8 +90,8 @@ public class ScannerService
                     continue;
                 }
 
-                // KYJ 엔진 분석 (lookback: 16 = 최근 4시간, phantom signal 방지)
-                var signal = Strategy.CheckEmaSignal(c15, c1h, c4h, lookback: 16);
+                // KYJ 엔진 분석 (lookback: 5 = 최근 75분, 트레이딩 엔진과 동일)
+                var signal = Strategy.CheckEmaSignal(c15, c1h, c4h, lookback: 5);
 
                 // EMA 근접도
                 var (emaGapPct, shrinking, crossCount) = Strategy.GetEmaProximity(c15);
@@ -83,8 +112,26 @@ public class ScannerService
                 change24h.TryGetValue(sym.Symbol, out double pctChange);
                 vol24h.TryGetValue(sym.Symbol, out double quoteVol);
 
+                bool shortOnly = isPump; // 펌프 잡코인 = 숏만 허용
+
+                // 펌프 잡코인에서 롱 시그널 → 무시 (숏 대기로 표시)
+                if (shortOnly && signal.Direction == "L")
+                {
+                    results.Add(new CoinScanResult
+                    {
+                        Symbol = sym,
+                        Signal = new("W", 0, new() { $"펌프코인 +{pctChange:F1}% — 숏 대기 중" }),
+                        ReadinessScore = 0,
+                        MarketState = "펌프",
+                        ShortOnly = true,
+                        PriceChange24h = pctChange,
+                        Volume24hUsdt = quoteVol,
+                    });
+                    continue;
+                }
+
                 // 시장 상태 판단
-                string marketState = DetermineMarketState(adx, crossCount, shrinking);
+                string marketState = shortOnly ? "펌프" : DetermineMarketState(adx, crossCount, shrinking);
 
                 // 준비도 점수 계산
                 int readiness = CalcReadiness(signal, emaGapPct, shrinking, adx, crossCount);
@@ -103,6 +150,7 @@ public class ScannerService
                     VolumeRatio = volRatio,
                     PriceChange24h = pctChange,
                     Volume24hUsdt = quoteVol,
+                    ShortOnly = shortOnly,
                 });
             }
             catch (OperationCanceledException) { throw; }

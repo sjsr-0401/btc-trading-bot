@@ -33,9 +33,14 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private int _scanCoinCount = 10;
     [ObservableProperty] private bool _autoSwitchEnabled;
     [ObservableProperty] private int _autoEntryScore = 50;
+    [ObservableProperty] private int _directEntryScore = 60;
     private DateTime _lastAutoSwitchTime = DateTime.MinValue;
     private bool _isAutoSwitching;
+    private bool _pendingShortOnly;   // 자동전환 시 ShortOnly 여부 전달용
     private string _engineSymbol = ""; // 엔진이 실제 거래 중인 심볼
+
+    // 차트 라인 동기화용 추적값 (재시작·손익분기 변경 감지)
+    private double _lastChartEntry, _lastChartSl, _lastChartTp;
 
     // === 모드 / 엔진 선택 ===
     [ObservableProperty] private string _currentMode = "Classic";
@@ -168,8 +173,8 @@ public partial class MainViewModel : ObservableObject
         }
 
         // 차트는 항상 변경 허용 (엔진은 _cfg.Symbol로 독립 동작)
-        if (info != null)
-            _ = SafeChangeChart(value, info.PricePrecision);
+        // info가 null이어도 기본 정밀도로 차트 로드 시도 (방어적 처리)
+        _ = SafeChangeChart(value, info?.PricePrecision ?? 2);
     }
 
     private async Task SafeChangeChart(string symbol, int pricePrecision)
@@ -192,7 +197,8 @@ public partial class MainViewModel : ObservableObject
         try
         {
             using var api = new BinanceApi("", "");
-            var symbols = await api.GetTopSymbols(5);
+            // 스캐너와 동일한 개수 로드 → 클릭 가능한 모든 코인이 AvailableSymbols에 포함되도록
+            var symbols = await api.GetTopSymbols(Math.Clamp(ScanCoinCount, 5, 20));
             AvailableSymbols.Clear();
             foreach (var s in symbols) AvailableSymbols.Add(s);
 
@@ -231,13 +237,21 @@ public partial class MainViewModel : ObservableObject
         ScanCoinCount = config.ScanCoinCount;
         AutoSwitchEnabled = config.AutoSwitchEnabled;
         AutoEntryScore = config.AutoEntryScore;
+        DirectEntryScore = config.DirectEntryScore;
     }
 
     /// <summary>차트 + 코인 목록 초기화 (API 키 없어도 공개 API로 로드)</summary>
     public async Task InitializeChartAsync()
     {
         await LoadTopSymbolsAsync();
-        await ChartVm.InitializeAsync(ApiKey ?? "", ApiSecret ?? "", SelectedSymbol);
+
+        // 심볼 목록 로드 후 display 갱신 (LoadFromConfig 시점에는 목록이 비어있었으므로)
+        var info = AvailableSymbols.FirstOrDefault(s => s.Symbol == SelectedSymbol);
+        if (info != null)
+            SelectedSymbolDisplay = info.DisplayName;
+
+        int pricePrecision = info?.PricePrecision ?? 2;
+        await ChartVm.InitializeAsync(ApiKey ?? "", ApiSecret ?? "", SelectedSymbol, pricePrecision);
 
         // 스캐너 초기화
         ScannerVm.CurrentSymbol = SelectedSymbol;
@@ -250,17 +264,16 @@ public partial class MainViewModel : ObservableObject
                 NavigateToTrading();
             });
         };
-        ScannerVm.OnBetterCoinFound += (symbol, score) =>
+        ScannerVm.OnBetterCoinFound += (symbol, score, shortOnly) =>
         {
-            Application.Current.Dispatcher.BeginInvoke(() => TryAutoSwitch(symbol, score));
+            Application.Current.Dispatcher.BeginInvoke(() => TryAutoSwitch(symbol, score, shortOnly));
         };
 
         try
         {
-            using var api = new BinanceApi("", "");
-            var scanSymbols = await api.GetTopSymbols(Math.Clamp(ScanCoinCount, 5, 20));
+            // LoadTopSymbolsAsync에서 이미 로드한 목록 재사용 (중복 API 호출 제거)
             ScannerVm.UpdateSettings(ScanIntervalSec, ScanCoinCount);
-            ScannerVm.SetSymbols(scanSymbols);
+            ScannerVm.SetSymbols(AvailableSymbols.ToList());
             _ = ScannerVm.InitialScanAsync();
         }
         catch (Exception ex)
@@ -293,7 +306,7 @@ public partial class MainViewModel : ObservableObject
                         if (symInfo != null) SelectedSymbolDisplay = $"{symInfo.BaseAsset} / USDT";
                     }
 
-                    LogEntries.Add($"[포지션 감지] {baseAsset} {side} {pos.Amount} @ {pos.EntryPrice:N2} (x{pos.Leverage}) → 봇 자동 시작");
+                    LogEntries.Add($"[포지션 감지] {baseAsset} {side} {pos.Amount} @ {PriceHelper.Format(pos.EntryPrice)} (x{pos.Leverage}) → 봇 자동 시작");
 
                     // 즉시 포지션 상태 설정 → 스캐너 자동전환 차단
                     PositionText = $"{baseAsset} {side} (감지됨)";
@@ -493,7 +506,7 @@ public partial class MainViewModel : ObservableObject
                     // 포지션이 있는 코인이 현재 선택과 다르면 자동 전환
                     if (pos.Symbol != SelectedSymbol)
                     {
-                        LogEntries.Add($"[포지션 감지] {baseAsset} {side} {pos.Amount} @ {pos.EntryPrice:N2} (x{pos.Leverage}) → 해당 코인으로 전환");
+                        LogEntries.Add($"[포지션 감지] {baseAsset} {side} {pos.Amount} @ {PriceHelper.Format(pos.EntryPrice)} (x{pos.Leverage}) → 해당 코인으로 전환");
                         SelectedSymbol = pos.Symbol;
                         var symInfo = AvailableSymbols.FirstOrDefault(s => s.Symbol == pos.Symbol);
                         if (symInfo != null)
@@ -503,7 +516,7 @@ public partial class MainViewModel : ObservableObject
                     if (!_isAutoSwitching)
                     {
                         ThemedDialog.Alert("기존 포지션 발견",
-                            $"{side} {pos.Amount} {baseAsset} @ {pos.EntryPrice:N2}\n" +
+                            $"{side} {pos.Amount} {baseAsset} @ {PriceHelper.Format(pos.EntryPrice)}\n" +
                             $"봇이 이 포지션을 자동 모니터링합니다.\n" +
                             $"(SL/TP 자동 설정)",
                             AlertType.Info);
@@ -531,7 +544,7 @@ public partial class MainViewModel : ObservableObject
             if (ps != null && ps.Balance > 0 && ps.Symbol == SelectedSymbol)
             {
                 string posInfo = ps.PositionType != "N"
-                    ? $"\n포지션: {(ps.PositionType == "L" ? "LONG" : "SHORT")} @ {ps.EntryPrice:N2}"
+                    ? $"\n포지션: {(ps.PositionType == "L" ? "LONG" : "SHORT")} @ {PriceHelper.Format(ps.EntryPrice)}"
                     : "";
                 if (ThemedDialog.Confirm("이전 테스트 복원",
                     $"잔고: {ps.Balance:N2} USDT{posInfo}\n" +
@@ -560,6 +573,9 @@ public partial class MainViewModel : ObservableObject
             SelectedEngine = SelectedEngine,
             IsTestMode = IsTestMode,
             TestBalance = TestBalance,
+            AutoEntryScore = AutoEntryScore,
+            DirectEntryScore = DirectEntryScore,
+            ShortOnly = _isAutoSwitching && _pendingShortOnly,
         };
 
         _engine = new TradingEngine(config);
@@ -583,9 +599,23 @@ public partial class MainViewModel : ObservableObject
                 SlTpText = "";
                 HoldDuration = "";
                 ScannerVm.HasOpenPosition = false;
+                _lastChartEntry = 0; _lastChartSl = 0; _lastChartTp = 0;
+                ChartVm.UpdatePositionLines(0, 0, 0); // 포지션 종료 시 차트 라인 즉시 제거
             }
             else
             {
+                // 차트 라인 동기화: 재시작·손익분기 SL 변경 시 자동 반영
+                if (_engine != null && SelectedSymbol == _engineSymbol)
+                {
+                    double cEntry = pos.EntryPrice;
+                    double cSl = _engine.SlPrice;
+                    double cTp = _engine.TpPrice;
+                    if (cEntry != _lastChartEntry || cSl != _lastChartSl || cTp != _lastChartTp)
+                    {
+                        _lastChartEntry = cEntry; _lastChartSl = cSl; _lastChartTp = cTp;
+                        ChartVm.UpdatePositionLines(cEntry, cSl, cTp);
+                    }
+                }
                 double pct = pos.EntryPrice > 0
                     ? (pos.Type == "L"
                         ? (price - pos.EntryPrice) / pos.EntryPrice * 100
@@ -730,6 +760,7 @@ public partial class MainViewModel : ObservableObject
             ScanCoinCount = ScanCoinCount,
             AutoSwitchEnabled = AutoSwitchEnabled,
             AutoEntryScore = AutoEntryScore,
+            DirectEntryScore = DirectEntryScore,
         };
         ConfigService.Save(config);
         StatusText = "설정 저장됨";
@@ -758,7 +789,7 @@ public partial class MainViewModel : ObservableObject
         IsTradingPage = true;
     }
 
-    private void TryAutoSwitch(string newSymbol, int score)
+    private void TryAutoSwitch(string newSymbol, int score, bool shortOnly = false)
     {
         if (!AutoSwitchEnabled) return;
         if (HasOpenPosition) return;
@@ -768,9 +799,11 @@ public partial class MainViewModel : ObservableObject
         if ((DateTime.Now - _lastAutoSwitchTime).TotalMinutes < 5) return;
 
         _lastAutoSwitchTime = DateTime.Now;
+        _pendingShortOnly = shortOnly;
 
         var prevSymbol = IsRunning ? _engineSymbol : SelectedSymbol;
-        LogEntries.Add($"[SCAN] 자동 전환: {prevSymbol} → {newSymbol} (준비도 {score}점)");
+        string modeTag = shortOnly ? " [숏전용]" : "";
+        LogEntries.Add($"[SCAN] 자동 전환: {prevSymbol} → {newSymbol} (준비도 {score}점{modeTag})");
 
         // 엔진 정지 + 리소스 정리 (자동전환: 포지션 청산 안 함)
         if (IsRunning)

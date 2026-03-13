@@ -19,6 +19,8 @@ public class BotConfig
     public int ScanIntervalSec { get; set; } = 60;
     public int ScanCoinCount { get; set; } = 10;
     public bool AutoSwitchEnabled { get; set; }
-    public int AutoEntryScore { get; set; } = 50;
+    public int AutoEntryScore { get; set; } = 50;   // 자동전환 기준 점수 (스캐너)
+    public int DirectEntryScore { get; set; } = 60;  // 즉시진입 점수 (가격확인 스킵)
     public string? LastMode { get; set; } // "Classic" or "Multi"
+    public bool ShortOnly { get; set; }   // 펌프 잡코인 — 숏 시그널만 허용
 }

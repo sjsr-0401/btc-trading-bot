@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd.exe //c '\"\"C:\\\\Program Files \\(x86\\)\\\\Inno Setup 6\\\\ISCC.exe\"\" \"\"c:\\\\dev\\\\active\\\\btc-trading-bot\\\\installer\\\\setup.iss\"\"')",
+      "Read(//c//**)",
+      "Bash(powershell.exe -Command \"Get-ChildItem ''C:\\\\Program Files \\(x86\\)\\\\Inno Setup 6\\\\'' -ErrorAction SilentlyContinue; Get-ChildItem ''C:\\\\Program Files\\\\Inno Setup 6\\\\'' -ErrorAction SilentlyContinue\")",
+      "Bash(\"C:/Program Files \\(x86\\)/Inno Setup 6/ISCC.exe\" \"c:/dev/active/btc-trading-bot/installer/setup.iss\")",
+      "Bash(cmd.exe //c \"dir \"\"C:\\\\Program Files \\(x86\\)\"\" | findstr /i inno\")",
+      "Bash(cmd.exe //c \"where ISCC.exe 2>nul || dir /s /b \"\"C:\\\\Program Files*\\\\ISCC.exe\"\" 2>nul\")",
+      "Bash(cmd.exe //c \"dir /s /b \"\"C:\\\\Program Files \\(x86\\)\\\\ISCC.exe\"\"\")",
+      "Bash(cmd.exe //c \"dir /s /b C:\\\\ISCC.exe 2>nul & dir /s /b \"\"C:\\\\Users\\\\admin\\\\AppData\\\\Local\\\\Programs\\\\Inno Setup*\"\" 2>nul\")",
+      "Bash(cmd.exe //c \"\"\"C:\\\\Users\\\\admin\\\\AppData\\\\Local\\\\Programs\\\\Inno Setup 6\\\\ISCC.exe\"\" \"\"c:\\\\dev\\\\active\\\\btc-trading-bot\\\\installer\\\\setup.iss\"\"\")",
+      "Bash(\"/c/Users/admin/AppData/Local/Programs/Inno Setup 6/ISCC.exe\" \"c:/dev/active/btc-trading-bot/installer/setup.iss\")",
+      "Read(//c/Program Files \\(x86\\)//**)",
+      "Read(//c/Program Files//**)",
+      "Read(//c/Program Files \\(x86\\)/**)",
+      "Bash(find:*)",
+      "Read(//c/Users/admin/AppData/**)",
+      "Read(//c/Program Files/**)"
+    ]
+  }
+}

@@ -2,7 +2,7 @@
 ; Build: dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
 
 #define MyAppName "BTC Trading Bot"
-#define MyAppVersion "0.2"
+#define MyAppVersion "0.5"
 #define MyAppPublisher "BTC Trading Bot"
 #define MyAppExeName "BtcTradingBot.exe"
 #define MyAppURL ""

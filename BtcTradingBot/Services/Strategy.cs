@@ -54,10 +54,11 @@ public static class Strategy
 
         // 크로스 탐색 (lookback=1: 직전 1봉, lookback>1: 사전분석용)
         bool crossUp = false, crossDn = false;
+        int crossBi = -1;
         for (int bi = closes.Length - 1; bi >= Math.Max(1, closes.Length - lookback); bi--)
         {
-            if (e7[bi] > e21[bi] && e7[bi - 1] <= e21[bi - 1]) { crossUp = true; break; }
-            if (e7[bi] < e21[bi] && e7[bi - 1] >= e21[bi - 1]) { crossDn = true; break; }
+            if (e7[bi] > e21[bi] && e7[bi - 1] <= e21[bi - 1]) { crossUp = true; crossBi = bi; break; }
+            if (e7[bi] < e21[bi] && e7[bi - 1] >= e21[bi - 1]) { crossDn = true; crossBi = bi; break; }
         }
         // 크로스 빈도 분석 (최근 50봉 = 12.5시간)
         int recentCrossCount = 0;
@@ -83,6 +84,19 @@ public static class Strategy
             double avgAtr = atrArr.Skip(atrArr.Length - 20).Take(20).Average();
             if (avgAtr > 0 && curAtr < avgAtr * 0.6)
                 return new("W", 0, new() { "횡보장 (ATR↓)" }, MakeDetail(0, 0, 0, 0, 0, 0, 0));
+        }
+
+        // 늦은 진입 감점: 크로스 이후 가격 이동량에 따라 점수 차감 (하드 블록 없이 감점만)
+        int lateEntryPenalty = 0;
+        if (crossBi >= 0)
+        {
+            double crossPrice = closes[crossBi];
+            double moveFromCross = crossPrice > 0 ? (cur - crossPrice) / crossPrice * 100 : 0;
+            // 방향 기준 이동량: 롱이면 양수가 나쁨(이미 오름), 숏이면 음수가 나쁨(이미 내림)
+            double moveForDir = crossUp ? moveFromCross : -moveFromCross;
+            if      (moveForDir > 3.0) lateEntryPenalty = -30;
+            else if (moveForDir > 2.0) lateEntryPenalty = -20;
+            else if (moveForDir > 1.0) lateEntryPenalty = -10;
         }
 
         int score = 0;
@@ -135,6 +149,9 @@ public static class Strategy
             else if (emaDevLong < -1.5)                       { score -= 6;  reasons.Add($"- EMA하회 ({emaDevLong:F1}%)"); }
             // 0.5~1.5%: 중립 (0점) / -1.5~-0.5%: 중립 (0점)
 
+            // 늦은 진입 감점
+            if (lateEntryPenalty < 0) { score += lateEntryPenalty; reasons.Add($"- 늦은진입 ({lateEntryPenalty}pt)"); }
+
             reasons.Add($"score:{score}");
             var detail = MakeDetail(rsiScore, macdScore, adxScore, volScore, candleScore, h1Score, h4Score);
             return score >= 45 ? new("L", score, reasons, detail) : new("W", score, reasons, detail);
@@ -181,6 +198,9 @@ public static class Strategy
             else if (emaDevShort < -1.5)                         { score -= 6;  reasons.Add($"- EMA상회 ({emaDevShort:F1}%)"); }
             // 0.5~1.5%: 중립 (0점) / -1.5~-0.5%: 중립 (0점)
 
+            // 늦은 진입 감점
+            if (lateEntryPenalty < 0) { score += lateEntryPenalty; reasons.Add($"- 늦은진입 ({lateEntryPenalty}pt)"); }
+
             reasons.Add($"score:{score}");
             var detail = MakeDetail(rsiScore, macdScore, adxScore, volScore, candleScore, h1Score, h4Score);
             return score >= 45 ? new("S", score, reasons, detail) : new("W", score, reasons, detail);
@@ -189,24 +209,17 @@ public static class Strategy
 
     public static bool ConfirmSignal(List<Candle> c15, string sigType, double sigPrice)
     {
-        if (c15.Count < 3) return false;
+        if (c15.Count < 2) return false;
         double cur = c15[^1].Close;
-        if (sigType == "L")
-        {
-            if (cur > sigPrice * 1.001 && c15[^1].Close > c15[^1].Open) return true;
-            if (cur > sigPrice * 1.001 && c15[^2].Close > c15[^2].Open && cur > c15[^2].Close) return true;
-        }
-        else if (sigType == "S")
-        {
-            if (cur < sigPrice * 0.999 && c15[^1].Close < c15[^1].Open) return true;
-            if (cur < sigPrice * 0.999 && c15[^2].Close < c15[^2].Open && cur < c15[^2].Close) return true;
-        }
+        // 캔들 방향 체크 제거, 임계값 0.1% → 0.05% (저유동성 시간대 대응)
+        if (sigType == "L") return cur > sigPrice * 1.0005;
+        if (sigType == "S") return cur < sigPrice * 0.9995;
         return false;
     }
 
-    /// <summary>봇 시작 시 사전분석: 최근 8봉 내 EMA 크로스 탐색</summary>
+    /// <summary>봇 시작 시 사전분석: 최근 5봉 내 EMA 크로스 탐색 (75분 이내 크로스만 허용)</summary>
     public static SignalResult PreAnalyze(List<Candle> c15, List<Candle> c1h, List<Candle> c4h)
-        => CheckEmaSignal(c15, c1h, c4h, lookback: 8);
+        => CheckEmaSignal(c15, c1h, c4h, lookback: 5);
 
     /// <summary>EMA 근접도 분석: 스캐너용</summary>
     public static (double emaGapPct, bool shrinking, int crossCount) GetEmaProximity(List<Candle> c15)

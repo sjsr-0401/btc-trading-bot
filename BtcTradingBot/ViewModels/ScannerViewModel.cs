@@ -42,8 +42,8 @@ public partial class ScannerViewModel : ObservableObject, IDisposable
     /// <summary>코인 클릭 시 MainViewModel에 전달</summary>
     public event Action<string>? OnCoinSelected;
 
-    /// <summary>더 좋은 코인 발견 시 (symbol, readinessScore)</summary>
-    public event Action<string, int>? OnBetterCoinFound;
+    /// <summary>더 좋은 코인 발견 시 (symbol, readinessScore, shortOnly)</summary>
+    public event Action<string, int, bool>? OnBetterCoinFound;
 
     public void SetSymbols(List<SymbolInfo> symbols)
     {
@@ -151,7 +151,7 @@ public partial class ScannerViewModel : ObservableObject, IDisposable
         // 1위 코인이 AutoEntryScore 이상이면 전환 추천
         if (best.ReadinessScore >= AutoEntryScore)
         {
-            OnBetterCoinFound?.Invoke(best.Symbol.Symbol, best.ReadinessScore);
+            OnBetterCoinFound?.Invoke(best.Symbol.Symbol, best.ReadinessScore, best.ShortOnly);
         }
     }
 

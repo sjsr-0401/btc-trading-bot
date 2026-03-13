@@ -41,8 +41,14 @@ public partial class ChartViewModel : ObservableObject, IDisposable
     public BatchObservableCollection<double> Ema50Values { get; } = new();
     public BatchObservableCollection<double> VolumeValues { get; } = new();
 
-    // 트레이드 마커
-    public ObservableCollection<RectangularSection> Sections { get; } = new();
+    // 포지션 라인 (LineSeries — Y축 범위 변경에도 올바르게 렌더링됨)
+    private readonly ObservableCollection<ObservablePoint> _entryLinePoints = new();
+    private readonly ObservableCollection<ObservablePoint> _slLinePoints    = new();
+    private readonly ObservableCollection<ObservablePoint> _tpLinePoints    = new();
+    public double EntryLinePrice { get; private set; }
+    public double SlLinePrice    { get; private set; }
+    public double TpLinePrice    { get; private set; }
+    public ObservableCollection<RectangularSection> Sections { get; } = new(); // XAML 바인딩 유지용 (비어있음)
     private readonly ObservableCollection<ObservablePoint> _entryMarkers = new();
     private readonly ObservableCollection<ObservablePoint> _exitMarkers = new();
 
@@ -124,6 +130,30 @@ public partial class ChartViewModel : ObservableObject, IDisposable
                 Fill = new SolidColorPaint(new SKColor(255, 165, 0, 80)),
                 ZIndex = 10,
             },
+            // 포지션 라인: 진입가 (파란 실선)
+            new LineSeries<ObservablePoint>
+            {
+                Values = _entryLinePoints,
+                Stroke = new SolidColorPaint(new SKColor(30, 144, 255)) { StrokeThickness = 1.5f },
+                GeometrySize = 0, Fill = null, LineSmoothness = 0, ZIndex = 5,
+                IsHoverable = false,
+            },
+            // 포지션 라인: SL (빨간 점선)
+            new LineSeries<ObservablePoint>
+            {
+                Values = _slLinePoints,
+                Stroke = new SolidColorPaint(new SKColor(239, 68, 68)) { StrokeThickness = 1.5f, PathEffect = new DashEffect([6f, 4f]) },
+                GeometrySize = 0, Fill = null, LineSmoothness = 0, ZIndex = 5,
+                IsHoverable = false,
+            },
+            // 포지션 라인: TP (초록 점선)
+            new LineSeries<ObservablePoint>
+            {
+                Values = _tpLinePoints,
+                Stroke = new SolidColorPaint(new SKColor(34, 197, 94)) { StrokeThickness = 1.5f, PathEffect = new DashEffect([6f, 4f]) },
+                GeometrySize = 0, Fill = null, LineSmoothness = 0, ZIndex = 5,
+                IsHoverable = false,
+            },
         ];
 
         VolumeSeries = [
@@ -136,9 +166,10 @@ public partial class ChartViewModel : ObservableObject, IDisposable
         ];
     }
 
-    public async Task InitializeAsync(string apiKey, string apiSecret, string symbol = "BTCUSDT")
+    public async Task InitializeAsync(string apiKey, string apiSecret, string symbol = "BTCUSDT", int pricePrecision = 2)
     {
         _symbol = symbol;
+        _pricePrecision = pricePrecision;
         _restApi = new BinanceApi(apiKey, apiSecret);
         await _restApi.SyncServerTime();
         await LoadCandlesAndStart();
@@ -371,7 +402,7 @@ public partial class ChartViewModel : ObservableObject, IDisposable
     private void UpdatePriceDisplay(double price)
     {
         // 동일 값이면 PropertyChanged 발생하지 않도록 스킵
-        var priceStr = _pricePrecision <= 2 ? $"${price:N2}" : $"${price.ToString($"N{_pricePrecision}")}";
+        var priceStr = $"${PriceHelper.Format(price)}";
 
         if (priceStr == _lastPriceStr) return;
         _lastPriceStr = priceStr;
@@ -450,52 +481,59 @@ public partial class ChartViewModel : ObservableObject, IDisposable
     {
         if (marker.Action.StartsWith("ENTRY"))
         {
-            Sections.Clear();
-
-            // 진입선 (파란 실선)
-            Sections.Add(MakeHLine(marker.Price, new SKColor(30, 144, 255), null));
-
-            // SL선 (빨간 점선)
-            if (marker.SlPrice.HasValue)
-                Sections.Add(MakeHLine(marker.SlPrice.Value, new SKColor(239, 68, 68),
-                    new DashEffect([6f, 4f])));
-
-            // TP선 (초록 점선)
-            if (marker.TpPrice.HasValue)
-                Sections.Add(MakeHLine(marker.TpPrice.Value, new SKColor(34, 197, 94),
-                    new DashEffect([6f, 4f])));
+            // 라인 in-place 업데이트 (Sections 컬렉션 변경 없음 — 깜박임 방지)
+            UpdatePositionLines(marker.Price, marker.SlPrice ?? 0, marker.TpPrice ?? 0);
 
             // 진입 마커 점
             _entryMarkers.Add(new ObservablePoint(CandleValues.Count - 1, marker.Price));
         }
         else // EXIT
         {
-            Sections.Clear();
+            UpdatePositionLines(0, 0, 0); // 라인 숨김
             _entryMarkers.Clear();
             _exitMarkers.Add(new ObservablePoint(CandleValues.Count - 1, marker.Price));
         }
     }
 
-    public void ClearMarkers()
+    /// <summary>포지션 라인 업데이트 — LineSeries 기반으로 스크롤/줌에도 정확히 렌더링</summary>
+    public void UpdatePositionLines(double entry, double sl, double tp)
     {
-        Sections.Clear();
-        _entryMarkers.Clear();
-        _exitMarkers.Clear();
+        EntryLinePrice = entry;
+        SlLinePrice    = sl;
+        TpLinePrice    = tp;
+        SetPriceLine(_entryLinePoints, entry);
+        SetPriceLine(_slLinePoints,    sl);
+        SetPriceLine(_tpLinePoints,    tp);
     }
 
-    private static RectangularSection MakeHLine(double price, SKColor color, PathEffect? dashEffect)
+    private static void SetPriceLine(ObservableCollection<ObservablePoint> points, double price)
     {
-        var paint = new SolidColorPaint(color) { StrokeThickness = 1.5f };
-        if (dashEffect != null) paint.PathEffect = dashEffect;
-
-        return new RectangularSection
+        if (price > 0)
         {
-            Yi = price,
-            Yj = price,
-            Stroke = paint,
-            Fill = null,
-            ZIndex = 5,
-        };
+            // 전체 캔들 범위를 충분히 커버 (x=-1 ~ MaxCandles*2)
+            if (points.Count == 2)
+            {
+                points[0].Y = price;
+                points[1].Y = price;
+            }
+            else
+            {
+                points.Clear();
+                points.Add(new ObservablePoint(-1, price));
+                points.Add(new ObservablePoint(MaxCandles * 2, price));
+            }
+        }
+        else
+        {
+            points.Clear();
+        }
+    }
+
+    public void ClearMarkers()
+    {
+        UpdatePositionLines(0, 0, 0);
+        _entryMarkers.Clear();
+        _exitMarkers.Clear();
     }
 
     private async Task UpdateOrderBookAsync()

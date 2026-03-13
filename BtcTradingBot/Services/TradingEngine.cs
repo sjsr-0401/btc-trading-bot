@@ -106,7 +106,7 @@ public class TradingEngine : IDisposable
                 _paperPosition = new Position("N", 0, 0, 0);
             }
             string posInfo = _paperPosition.Type != "N"
-                ? $" | 복원: {(_paperPosition.Type == "L" ? "LONG" : "SHORT")} @ {_paperPosition.EntryPrice:N2}"
+                ? $" | 복원: {(_paperPosition.Type == "L" ? "LONG" : "SHORT")} @ {PriceHelper.Format(_paperPosition.EntryPrice)}"
                 : "";
             Log("[TEST] START! [{0}] 가상 잔고 {1:F2} USDT | {2} x{3} | {4} USDT{5}",
                 _cfg.SelectedEngine, CurrentBalance, _cfg.Symbol, _cfg.Leverage, _cfg.TradeUsdt, posInfo);
@@ -176,8 +176,8 @@ public class TradingEngine : IDisposable
                         _openQty = existPos.Amount;
 
                         string side = existPos.Type == "L" ? "LONG" : "SHORT";
-                        Log("[기존 포지션] {0} {1} @ {2:N2} | SL:{3} TP:{4}",
-                            side, existPos.Amount, existPos.EntryPrice, slPrice, tpPrice);
+                        Log("[기존 포지션] {0} {1} @ {2} | SL:{3} TP:{4}",
+                            side, existPos.Amount, PriceHelper.Format(existPos.EntryPrice), slPrice, tpPrice);
                         OnEngineState?.Invoke($"{CoinTag} 기존 포지션 감지 — SL/TP 적용됨");
                     }
                 }
@@ -195,6 +195,9 @@ public class TradingEngine : IDisposable
         // KYJ 사전분석: 최근 8봉(2시간) 내 EMA 크로스 탐색
         if (_cfg.SelectedEngine == "KYJ")
         {
+            if (_cfg.ShortOnly)
+                Log("[ShortOnly] 펌프코인 감지 — 데드크로스(숏) 시그널만 허용");
+
             try
             {
                 var preC15 = await _api!.GetKlines(_cfg.Symbol, "15m", 200);
@@ -206,14 +209,23 @@ public class TradingEngine : IDisposable
                     OnAnalysisResult?.Invoke(preSig);
                     if (preSig.Direction != "W")
                     {
-                        _pendingType = preSig.Direction;
-                        _pendingScore = preSig.Score;
-                        _pendingCount = 0;
-                        _pendingPrice = preC15[^1].Close;
-                        Log("사전분석: {0} score:{1} [{2}]",
-                            preSig.Direction == "L" ? "LONG" : "SHORT",
-                            preSig.Score, string.Join(" | ", preSig.Reasons));
-                        OnEngineState?.Invoke($"{CoinTag} 사전분석: {(preSig.Direction == "L" ? "LONG" : "SHORT")} 신호 감지! ({preSig.Score}점)");
+                        // ShortOnly 모드에서 Long 사전신호 무시
+                        if (_cfg.ShortOnly && preSig.Direction == "L")
+                        {
+                            Log("사전분석: LONG 감지 → ShortOnly 모드로 무시");
+                            OnEngineState?.Invoke($"{CoinTag} [숏전용] 데드크로스 대기 중");
+                        }
+                        else
+                        {
+                            _pendingType = preSig.Direction;
+                            _pendingScore = preSig.Score;
+                            _pendingCount = 0;
+                            _pendingPrice = preC15[^1].Close;
+                            Log("사전분석: {0} score:{1} [{2}]",
+                                preSig.Direction == "L" ? "LONG" : "SHORT",
+                                preSig.Score, string.Join(" | ", preSig.Reasons));
+                            OnEngineState?.Invoke($"{CoinTag} 사전분석: {(preSig.Direction == "L" ? "LONG" : "SHORT")} 신호 감지! ({preSig.Score}점)");
+                        }
                     }
                     else
                     {
@@ -376,7 +388,7 @@ public class TradingEngine : IDisposable
                             _paperSlPrice = pos.EntryPrice;
                             SlPrice = pos.EntryPrice;
                             _breakEvenActivated = true;
-                            Log("손익분기 보호: SL → {0:N2}", pos.EntryPrice);
+                            Log("손익분기 보호: SL → {0}", PriceHelper.Format(pos.EntryPrice));
                         }
                         else if (_api != null)
                         {
@@ -389,7 +401,7 @@ public class TradingEngine : IDisposable
                                     await _api.TakeProfitMarket(_cfg.Symbol, beSide, pos.Amount, TpPrice, _pricePrecision);
                                 SlPrice = pos.EntryPrice;
                                 _breakEvenActivated = true;
-                                Log("손익분기 보호: SL → {0:N2}", pos.EntryPrice);
+                                Log("손익분기 보호: SL → {0}", PriceHelper.Format(pos.EntryPrice));
                             }
                             catch (Exception ex) { Log("ERR: 손익분기 SL 변경 실패: {0} (다음 사이클 재시도)", ex.Message); }
                         }
@@ -424,6 +436,10 @@ public class TradingEngine : IDisposable
 
                 if (cnt % 5 == 0) OnStatsChanged?.Invoke();
 
+                // 10분마다 서버 시간 재동기화 (Timestamp recvWindow 오류 방지)
+                if (!IsTest && cnt % 10 == 0 && _api != null)
+                    try { await _api.SyncServerTime(); } catch { }
+
                 consecErrors = 0; // 정상 완료 시 리셋
                 await Task.Delay(_cfg.CheckIntervalSeconds * 1000, _cts.Token);
             }
@@ -455,7 +471,7 @@ public class TradingEngine : IDisposable
             {
                 ConfigService.SavePaperState(CreatePaperState());
                 if (_paperPosition.Type != "N")
-                    Log("[SHUTDOWN] 테스트 상태 저장됨 (포지션: {0} @ {1:N2})", _paperPosition.Type, _paperPosition.EntryPrice);
+                    Log("[SHUTDOWN] 테스트 상태 저장됨 (포지션: {0} @ {1})", _paperPosition.Type, PriceHelper.Format(_paperPosition.EntryPrice));
                 else
                     Log("[SHUTDOWN] 테스트 상태 저장됨 (잔고: {0:N2})", CurrentBalance);
             }
@@ -676,25 +692,35 @@ public class TradingEngine : IDisposable
 
     private async Task AnalyzeKYJ(List<Candle> c15, List<Candle> c1h, double cp)
     {
+        // ShortOnly 모드에서 롱 pending이 있으면 즉시 취소
+        if (_cfg.ShortOnly && _pendingType == "L")
+        {
+            Log("ShortOnly 모드 — 롱 신호 취소, 데드크로스 대기");
+            ResetPending();
+        }
+
         if (_pendingType != "N")
         {
             _pendingCount++;
             string crossName = _pendingType == "L" ? "골든크로스" : "데드크로스";
-            OnEngineState?.Invoke($"{CoinTag} {crossName} 가격 확인 중 ({_pendingCount}/4)");
-            if (_pendingCount > 4)
+            bool isDirectEntry = _pendingScore >= _cfg.DirectEntryScore;
+            int maxCycles = isDirectEntry ? 1 : 8; // 즉시진입 점수 이상: 1사이클, 일반: 8사이클(80초)
+            OnEngineState?.Invoke($"{CoinTag} {crossName} 가격 확인 중 ({_pendingCount}/{maxCycles})");
+            if (_pendingCount > maxCycles)
             {
                 Log("{0} 신호 만료 — 가격 미확인", crossName);
-                _signalSkipCycles = 5; // 동일 크로스 재탐지 방지 (5사이클)
+                _signalSkipCycles = 2; // 재탐지 방지 2사이클(20초)만 차단
                 ResetPending();
             }
-            else if (Strategy.ConfirmSignal(c15, _pendingType, _pendingPrice))
+            else if (isDirectEntry || Strategy.ConfirmSignal(c15, _pendingType, _pendingPrice))
             {
                 var (sl, tp, _atr) = Strategy.CalcSlTp(c15);
                 double bal = IsTest ? CurrentBalance : await _api!.GetBalance();
                 double inv = Math.Min(_cfg.TradeUsdt, bal * 0.9);
                 if (inv >= 5)
                 {
-                    Log("{0} 확인완료! SL:{1}% TP:{2}%", crossName, sl, tp);
+                    string entryMode = isDirectEntry ? "즉시진입" : "확인완료";
+                    Log("{0} {1}! SL:{2}% TP:{3}%", crossName, entryMode, sl, tp);
                     if (IsTest)
                         OpenPaperPosition(_pendingType, inv, sl, tp, cp);
                     else
@@ -704,7 +730,7 @@ public class TradingEngine : IDisposable
             }
             else
             {
-                Log("{0} 가격확인 {1}/4", crossName, _pendingCount);
+                Log("{0} 가격확인 {1}/{2}", crossName, _pendingCount, maxCycles);
             }
         }
         else if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() - _lastTradeTime > KyjCooldownSec)
@@ -720,8 +746,16 @@ public class TradingEngine : IDisposable
             OnEngineState?.Invoke($"{CoinTag} 분석 중...");
             var c4h = await _api!.GetKlines(_cfg.Symbol, "4h", 200);
             if (c4h == null) return;
-            var sig = Strategy.CheckEmaSignal(c15, c1h, c4h, lookback: 3);
+            var sig = Strategy.CheckEmaSignal(c15, c1h, c4h, lookback: 5);
             OnAnalysisResult?.Invoke(sig);
+
+            // ShortOnly 모드에서 Long 신호 무시
+            if (_cfg.ShortOnly && sig.Direction == "L")
+            {
+                OnEngineState?.Invoke($"{CoinTag} [숏전용] 롱 신호 무시 — 데드크로스 대기");
+                return;
+            }
+
             if (sig.Direction != "W" && sig.Score >= _cfg.AutoEntryScore)
             {
                 _pendingType = sig.Direction;
@@ -886,7 +920,7 @@ public class TradingEngine : IDisposable
     {
         _cts?.Cancel();
         _cts?.Dispose();
-        _api?.Dispose();
+        // _api는 루프 종료 시 자체 정리됨 (외부에서 dispose 시 레이스 컨디션 방지)
         _closeLock.Dispose();
         _logWriter?.Dispose();
         _logWriter = null;

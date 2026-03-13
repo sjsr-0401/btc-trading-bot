@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:BtcTradingBot.ViewModels"
         xmlns:views="clr-namespace:BtcTradingBot.Views"
-        Title="BTC Trading Bot" Height="800" Width="1400"
+        Title="BTC Trading Bot v0.3" Height="800" Width="1400"
         MinHeight="600" MinWidth="1100"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None" AllowsTransparency="False"
@@ -683,10 +683,15 @@
                                     스캔 결과에서 진입 점수 이상인 코인 발견 시 자동 전환 (5분 쿨다운)
                                 </TextBlock>
 
-                                <Label Content="진입 점수" Margin="0,6,0,0"/>
-                                <TextBlock Text="자동 전환 기준 점수 (45~100)" FontSize="10"
+                                <Label Content="자동전환 점수" Margin="0,6,0,0"/>
+                                <TextBlock Text="스캐너에서 이 점수 이상 코인 발견 시 자동전환 (45~100)" FontSize="10"
                                            Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
                                 <TextBox Text="{Binding AutoEntryScore, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10"/>
+
+                                <Label Content="즉시진입 점수" Margin="0,6,0,0"/>
+                                <TextBlock Text="이 점수 이상이면 가격확인 없이 즉시 진입 (45~100)" FontSize="10"
+                                           Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                                <TextBox Text="{Binding DirectEntryScore, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10"/>
 
                                 <Button Content="설정 저장" Command="{Binding SaveConfigCommand}"
                                         Style="{StaticResource SecondaryButton}" Margin="0,6,0,0"/>
